@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from app.core.models.database import LoanApplication, ModelMetrics
 from app.config.database import get_db
+from app.core.models.auth_schemas import LoanStatus
 import logging
 
 logger = logging.getLogger(__name__)

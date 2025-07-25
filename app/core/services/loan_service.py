@@ -16,6 +16,7 @@ from app.ml.models.predictor import LoanPredictor
 from app.ml.explainer.llm_explainer import LLMExplainer
 from app.utils.validators import LoanValidator
 from app.utils.exceptions import PredictionError, ValidationError
+from app.core.models.auth_schemas import LoanStatus
 
 logger = logging.getLogger(__name__)
 

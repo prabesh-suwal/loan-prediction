@@ -69,7 +69,15 @@ async def root():
         "message": "Loan Approval System API",
         "version": settings.version,
         "status": "running",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat(),
+        "endpoints": {
+            "docs": "/docs",
+            "health": "/health",
+            "api": "/api/v1",
+            "auth": "/api/v1/auth",
+            "loans": "/api/v1/loans",
+            "admin": "/api/v1/admin",
+        }
     }
 
 @app.get("/health")
@@ -95,6 +103,7 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat()
     }
 
+# Direct loan prediction endpoint (backward compatibility)
 @app.post("/api/v1/loans/predict", response_model=LoanPredictionResponse)
 async def predict_loan_approval(application: LoanApplicationInput):
     """Predict loan approval for a new application."""
@@ -127,6 +136,25 @@ async def predict_loan_approval(application: LoanApplicationInput):
             confidence_score=prediction_result.get('confidence_score')
         )
         
+        # Save to database if loan service is available
+        try:
+            from app.config.database import SessionLocal
+            from app.core.repositories.loan_repository import LoanRepository
+            from app.core.models.auth_schemas import LoanStatus
+            
+            db = SessionLocal()
+            loan_repo = LoanRepository(db)
+            await loan_repo.create_application(
+                application_id=application_id,
+                input_data=input_data,
+                prediction_result=prediction_result,
+                justification=prediction_result['justification'],
+                status=LoanStatus.DRAFTED
+            )
+            db.close()
+        except Exception as e:
+            logger.warning(f"Could not save to database: {e}")
+        
         logger.info(f"Processed loan application {application_id}: {prediction_result['loan_decision']}")
         return response
         
@@ -136,6 +164,44 @@ async def predict_loan_approval(application: LoanApplicationInput):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Prediction failed: {str(e)}"
         )
+
+# Include individual routers (more reliable than importing the combined api_router)
+logger.info("Mounting API endpoints...")
+
+# Mount authentication endpoints
+try:
+    from app.api.v1.endpoints.auth import router as auth_router
+    app.include_router(auth_router, prefix="/api/v1/auth", tags=["authentication"])
+    logger.info("✅ Authentication router mounted")
+except Exception as e:
+    logger.error(f"❌ Failed to mount auth router: {e}")
+
+
+# Mount admin dashboard endpoints
+try:
+    from app.api.v1.endpoints.admin_dashboard import router as dashboard_router
+    app.include_router(dashboard_router, prefix="/api/v1/admin", tags=["admin-dashboard"])
+    logger.info("✅ Admin dashboard router mounted")
+except Exception as e:
+    logger.error(f"❌ Failed to mount dashboard router: {e}")
+
+# Mount basic admin endpoints
+try:
+    from app.api.v1.endpoints.admin import router as admin_router
+    app.include_router(admin_router, prefix="/api/v1/admin", tags=["admin"])
+    logger.info("✅ Admin router mounted")
+except Exception as e:
+    logger.error(f"❌ Failed to mount admin router: {e}")
+
+
+
+# Mount health endpoints
+try:
+    from app.api.v1.endpoints.health import router as health_router
+    app.include_router(health_router, prefix="/api/v1/health", tags=["health"])
+    logger.info("✅ Health router mounted")
+except Exception as e:
+    logger.error(f"❌ Failed to mount health router: {e}")
 
 @app.get("/api/v1/model/info")
 async def get_model_info():
@@ -156,6 +222,17 @@ async def get_model_info():
         "features": predictor.preprocessor_info.get('feature_names', []) if predictor.preprocessor_info else []
     }
 
+# Add a test endpoint to verify mounting
+@app.get("/api/v1/test")
+async def test_api():
+    """Test endpoint to verify API mounting."""
+    return {
+        "message": "API v1 is working",
+        "timestamp": datetime.utcnow().isoformat(),
+        "available_routes": len(app.routes)
+    }
+
+
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
@@ -165,6 +242,9 @@ async def global_exception_handler(request, exc):
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Internal server error"}
     )
+
+# Log final status
+logger.info(f"Application started with {len(app.routes)} routes")
 
 if __name__ == "__main__":
     import uvicorn

@@ -32,6 +32,8 @@ Accept: application/json
 
 | Field | Type | Required | Allowed Values | Validation | Description |
 |-------|------|----------|---------------|------------|-------------|
+| `name` | string | ✅ | min_length=2, max_length=100 | Full name of the applicant |
+| `email` | string | ✅ | Valid email format | Email address of the applicant |
 | `gender` | string | ✅ | `"Male"`, `"Female"` | Exact match | Applicant's gender |
 | `married` | string | ✅ | `"Yes"`, `"No"` | Exact match | Marital status |
 | `dependents` | integer | ✅ | `0` to `10` | Range validation | Number of dependents |
