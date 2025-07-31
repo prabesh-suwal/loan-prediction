@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import loans, admin, health, auth, admin_dashboard
+from app.api.v1.endpoints import admin, loans, health, auth, admin_dashboard
 
 api_router = APIRouter()
 

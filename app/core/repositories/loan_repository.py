@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 
 from app.core.models.database import LoanApplication, ModelMetrics
 from app.config.database import get_db
-from app.core.models.auth_schemas import LoanStatus
 import logging
 
 logger = logging.getLogger(__name__)
@@ -22,14 +21,16 @@ class LoanRepository:
         input_data: Dict[str, Any],
         prediction_result: Dict[str, Any],
         justification: str
-    ) -> LoanApplication:
+    ) -> Optional[LoanApplication]:
         """Create a new loan application record."""
         
         try:
             # Calculate derived features
             total_income = input_data.get('applicant_income', 0) + input_data.get('coapplicant_income', 0)
-            emi = input_data.get('loan_amount', 0) / input_data.get('loan_amount_term', 1)
-            emi_income_ratio = emi / total_income if total_income > 0 else 0
+            loan_amount = input_data.get('loan_amount', 0)
+            loan_term = input_data.get('loan_amount_term', 1)
+            emi = (loan_amount * 1000) / loan_term if loan_term > 0 else 0  # Convert to actual EMI
+            emi_income_ratio = emi / (total_income / 12) if total_income > 0 else 0
             
             application = LoanApplication(
                 application_id=application_id,
@@ -51,36 +52,21 @@ class LoanRepository:
                 risk_score=prediction_result.get('risk_score'),
                 risk_category=prediction_result.get('risk_category'),
                 ml_justification=justification,
-                recommendation=prediction_result.get('recommendation')
+                recommendation=prediction_result.get('recommendation'),
+                confidence_score=prediction_result.get('confidence_score')
             )
             
             self.db.add(application)
             self.db.commit()
-            return True
+            self.db.refresh(application)
+            
+            logger.info(f"Successfully created loan application: {application_id}")
+            return application
             
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Error updating weight: {e}")
-            return False
-    
-    async def get_all_weights(self) -> List[Dict]:
-        """Get all feature weights with metadata."""
-        try:
-            weights = self.db.query(FeatureWeights).all()
-            return [
-                {
-                    "feature_name": w.feature_name,
-                    "weight": w.weight,
-                    "description": w.description,
-                    "is_active": w.is_active,
-                    "created_at": w.created_at,
-                    "updated_at": w.updated_at
-                }
-                for w in weights
-            ]
-        except Exception as e:
-            logger.error(f"Error fetching all weights: {e}")
-            return []
+            logger.error(f"Error creating application {application_id}: {e}")
+            return None
     
     async def get_application_by_id(self, application_id: str) -> Optional[Dict[str, Any]]:
         """Get application by ID."""
@@ -91,7 +77,30 @@ class LoanRepository:
             ).first()
             
             if application:
-                return application.to_dict()
+                return {
+                    "application_id": application.application_id,
+                    "gender": application.gender,
+                    "married": application.married,
+                    "dependents": application.dependents,
+                    "education": application.education,
+                    "self_employed": application.self_employed,
+                    "applicant_income": application.applicant_income,
+                    "coapplicant_income": application.coapplicant_income,
+                    "loan_amount": application.loan_amount,
+                    "loan_amount_term": application.loan_amount_term,
+                    "credit_history": application.credit_history,
+                    "property_area": application.property_area,
+                    "predicted_approval": application.predicted_approval,
+                    "risk_score": application.risk_score,
+                    "risk_category": application.risk_category,
+                    "recommendation": application.recommendation,
+                    "confidence_score": application.confidence_score,
+                    "ml_justification": application.ml_justification,
+                    "final_status": application.final_status,
+                    "admin_notes": application.admin_notes,
+                    "created_at": application.created_at.isoformat() if application.created_at else None,
+                    "updated_at": application.updated_at.isoformat() if application.updated_at else None
+                }
             return None
             
         except Exception as e:
@@ -112,6 +121,7 @@ class LoanRepository:
             ).first()
             
             if not application:
+                logger.warning(f"Application not found: {application_id}")
                 return False
             
             application.final_status = final_status
@@ -119,11 +129,12 @@ class LoanRepository:
             application.updated_at = datetime.utcnow()
             
             self.db.commit()
+            logger.info(f"Updated admin decision for {application_id}: {final_status}")
             return True
             
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Error updating admin decision: {e}")
+            logger.error(f"Error updating admin decision for {application_id}: {e}")
             return False
 
     async def get_applications_for_review(
@@ -145,8 +156,21 @@ class LoanRepository:
             total_count = query.count()
             applications = query.offset(offset).limit(limit).all()
             
+            app_list = []
+            for app in applications:
+                app_list.append({
+                    "application_id": app.application_id,
+                    "applicant_income": app.applicant_income,
+                    "loan_amount": app.loan_amount,
+                    "predicted_approval": app.predicted_approval,
+                    "risk_score": app.risk_score,
+                    "risk_category": app.risk_category,
+                    "recommendation": app.recommendation,
+                    "created_at": app.created_at.isoformat() if app.created_at else None
+                })
+            
             return {
-                "applications": [app.to_dict() for app in applications],
+                "applications": app_list,
                 "total_count": total_count,
                 "has_more": total_count > (offset + limit)
             }
@@ -163,7 +187,18 @@ class LoanRepository:
                 LoanApplication.final_status.isnot(None)
             ).all()
             
-            return [app.to_dict() for app in applications]
+            app_list = []
+            for app in applications:
+                app_list.append({
+                    "application_id": app.application_id,
+                    "predicted_approval": app.predicted_approval,
+                    "final_status": app.final_status,
+                    "risk_score": app.risk_score,
+                    "risk_category": app.risk_category,
+                    "created_at": app.created_at.isoformat() if app.created_at else None
+                })
+            
+            return app_list
             
         except Exception as e:
             logger.error(f"Error fetching retraining data: {e}")
